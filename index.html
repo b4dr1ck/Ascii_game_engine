@@ -1,0 +1,546 @@
+
+<!DOCTYPE HTML>
+<html>
+
+<head>
+    <meta charset="utf-8">
+    <style>
+        body { background: black;}
+    </style>
+</head>  
+
+<body>
+    <canvas style="background:black;border:1px solid white;padding:5px;" id="canvas" width="900" height="600"></canvas>
+    
+    <script>
+        var level_design =  '##############################\n' + 
+                            '#P..........................P#\n' + 
+                            '#............................#\n' + 
+                            '#............................#\n' + 
+                            '#............................#\n' + 
+                            '|............................|\n' + 
+                            '#............................#\n' + 
+                            '#.............#/#............#\n' + 
+                            '#.............#.#............#\n' + 
+                            '#.............#.#............#\n' + 
+                            '###############.##############\n' +
+                            '#P............#.#...........P#\n' +
+                            '#.............#.#............#\n' +
+                            '#.............#/#............#\n' +
+                            '#............................#\n' +
+                            '#............................#\n' +
+                            '#............................#\n' +
+                            '#............................#\n' +
+                            '###############/##############\n' + 
+                            '#............................#\n' +
+                            '#............................#\n' +
+                            '#............................#\n' +
+                            '#............................#\n' +
+                            '#............................#\n' +
+                            '##########...#################\n' +
+                            '.........#...#................\n' +
+                            '.........#...#................\n' +
+                            '.........#####................' 
+                
+        var level = new Array();
+        var player = new Character();
+        var mode = "move";
+        var LOG_MAX = 45;
+        var log_buffer = [];
+        var FONT_SIZE = 12;
+        var FONT_TYPE = "Tahoma";
+        var canvas = document.getElementById("canvas");
+        var level_graphics = canvas.getContext("2d");
+        
+        function Character() {
+            this.symbol = "@";
+            this.name = "bad rick";
+            this.color = "red";
+            this.x = 5;
+            this.y = 5;
+            
+            this.dmg = 1;
+            this.can_dmg_mat = ["wood","glass","food"];
+            this.can_take_weight = 25;
+            
+            this.equipment = {"head":null,
+                              "neck":null,
+                              "chest":new Wearable({"name":"shirt","type":"wearable","symbol":"s"}),
+                              "legs":new Wearable({"name":"jeans","type":"wearable","symbol":"j","capacity":1}),
+                              "arms":null,
+                              "back":new Wearable({"name":"backpack","type":"wearable","symbol":"b","capacity":6}),
+                              "hand":{"left":null, "right":null},
+                              "feet":new Item({"name":"slippers","type":"wearable","symbol":"u"})
+                             }
+        }
+        
+        function Tile(parameter) {
+            this.symbol = parameter.symbol;
+            this.name = parameter.name;
+            this.type = parameter.type;
+            this.color = parameter.color ? parameter.color : "white";
+            this.hp = parameter.hp;
+            this.passable = parameter.passable;
+            this.material = parameter.material;
+            this.items = [];
+
+            this.description = function() { 
+                var description_string = "You see a " 
+ 
+                if (this.hp <= 0) {
+                    description_string += " broken ";
+                }
+                
+                description_string += this.name + " (" + this.material + ", " + this.type + ")"; 
+                description_string = description_string.replace(/You see a ([aeiou])(.*)/,"You see an $1$2")     
+       
+                render_log_msg(this.color,description_string);
+            }
+            
+            
+            this.smash = function(dmg) {
+                var target_object = this;
+                if (this.items.length > 0) {
+                    target_object = this.items[this.items.length - 1]; 
+                }
+
+                if (player.can_dmg_mat.indexOf(target_object.material) >= 0) {
+                    if (target_object.hp <= 0) {
+                        render_log_msg("red","The " + target_object.name + " is allready broken");
+                        return;
+                    } else {
+                        target_object.hp -= dmg;
+                        render_log_msg("red","You hit the " + target_object.name + " for " + dmg + " dmg");
+                        if (target_object.hp <= 0) {
+                            render_log_msg("red","You broke the " + target_object.name);
+                            target_object.passable = true;
+                            target_object.color = "#666";
+                            target_object.state = "";
+                        }
+                    }
+                } else {
+                    render_log_msg("red","You can't damage the " + target_object.name + " =>" + target_object.material);
+                }    
+            }
+        }
+        
+        function Item(parameter) {
+            Tile.call(this,parameter)
+
+            this.volume = parameter.volume;
+            this.weight = parameter.weight;
+            
+            this.move = function (target,where_to_move) {
+                var target_item = target["items"][target["items"].length - 1 ];
+                if (target_item.weight <= player.can_take_weight) {
+                    if (where_to_move.passable) {
+                        target["items"].pop();
+                        where_to_move["items"].push(target_item);
+                        render_log_msg(null,"You move the " + target_item.name);
+                        return true;
+                    } else {
+                        render_log_msg("red","No place to move the " + target_item.name);    
+                        return false;
+                    }
+                } else {
+                    render_log_msg("red","Can't move the " + target_item.name + " => " + this.weight + "kg");
+                }
+            }
+            
+            this.grab = function(target) {
+                if (this.hp > 0) {
+                    if (this.weight <= player.can_take_weight) {
+                        if (player.equipment.back) {
+                            if (this.volume <= player.equipment.back.capacity) {    
+                                render_log_msg(null,"You put the " + this.name + " in your " + player.equipment.back.name);
+                                player.equipment.back.container.push(this)
+                                player.equipment.back.capacity -= this.volume;
+                                target.pop();
+                                return;
+                            } else {
+                                render_log_msg("red","No place to put " + this.name + " in your " +  player.equipment.back.name);
+                            }
+                        }
+                        if (player.equipment.legs) {
+                            if (this.volume <= player.equipment.legs.capacity) {
+                                render_log_msg(null,"You put the " + this.name + " in your " + player.equipment.legs.name);
+                                player.equipment.legs.container.push(this)
+                                player.equipment.legs.capacity -= this.volume;
+                                target.pop();
+                                return;
+                            } else {
+                                render_log_msg("red","No place to put " + this.name + " in your " +  player.equipment.legs.name);
+                            }
+                        } 
+                        if (this.volume > 10) {
+                            if (!player.equipment.hand.left && !player.equipment.hand.right) {
+                                render_log_msg(null,"You put the " + this.name + " in your both hands");
+                                player.equipment.hand.left = this;
+                                player.equipment.hand.right = this;
+                                target.pop();
+                                return;
+                            } else {
+                                render_log_msg("red","You need both hands for the " + this.name);   
+                                return;
+                            }   
+                        }
+                        if (! player.equipment.hand.left) {
+                            render_log_msg(null,"You put the " + this.name + " in your left hand");
+                            player.equipment.hand.left = this;
+                            target.pop();
+                            return;
+                        } else {
+                            render_log_msg("red","No place to put " + this.name + " in your left hand");
+                        }
+
+                        if (! player.equipment.hand.right) {
+                            render_log_msg(null,"You put the " + this.name + " in your right hand");
+                            player.equipment.hand.right = this;
+                            target.pop();
+                            return;
+                        } else {
+                            render_log_msg("red","No place to put " + this.name + " in your right hand");
+                        }
+                        
+                    } else {
+                        render_log_msg("red","Too heavy to take the " + this.name + " => " + this.weight + "kg");
+                    }
+                } else {
+                    render_log_msg("red","The " + this.name + " is broken.");
+                    target.unshift(this);
+                    target.pop();
+                }
+            }
+        }
+        
+        function Consumable(parameter) {
+            Item.call(this,parameter);
+        }
+        
+        function Wearable(parameter) {
+            Item.call(this,parameter);
+            
+            this.capacity = parameter.capacity ? parameter.capacity : 0;
+            this.container = [];
+        }
+        
+        function Static(parameter) {
+            Tile.call(this,parameter);
+            
+            this.weight = parameter.weight ? parameter.weight : 999;
+            
+            this.description = function() { 
+                var description_string = "you see a";
+                
+                if (this.hp <= 0) {
+                    description_string += " broken ";
+                }
+
+                if (this.type == "passage") {
+                    if (this.state) {
+                        description_string += " opened";
+                    } else if (!this.state) {
+                        description_string += " closed";
+                    }
+                } else if (this.type == "light") {
+                    if (this.state) {
+                        description_string += " switched on";
+                    } else if (!this.state) {
+                        description_string += " switched off";
+                    }
+                }      
+                description_string = description_string.replace(/you see a ([aeiou])(.*)/,"you see an $1$2");
+                description_string += " " + this.name + " (" + this.material + ", " + this.type + ")"; 
+                render_log_msg(this.color, description_string);
+            }
+        }
+        
+        function Interactive(parameter) {
+            Static.call(this,parameter);
+            
+            this.state = parameter.state ? parameter.state : false;
+            
+            var state_msg;
+            
+            this.switch = function() {
+
+                if (this.type == "passage") {
+                    if (!this.state) {
+                        state_msg = "opened"
+                        this.passable = true;
+                    } else {
+                        state_msg = "closed"
+                        this.passable = false;
+                    }
+                } else if (this.type == "light") {
+                    if (!this.state) {
+                        state_msg = "switched on"
+                    } else {
+                        state_msg = "switched off"
+                    }
+                }
+
+                if (this.hp > 0) {
+                    render_log_msg(this.color, "You've " + state_msg + " the " + this.name)
+                    this.state = !this.state;
+                } else {
+                    render_log_msg("red","It's broken" );
+                }
+            }
+        }
+                
+        initialize_level();
+        render_level()
+        render_log_hud();
+        render_misc_info();
+        render_log_msg("lightGreen","Welcome,...");
+    
+        function initialize_level() {
+            level_design.split("\n").forEach(function(line,y) {
+                level[y] = new Array();
+                line.split("").forEach(function(tile,x) {
+                    switch  (tile) {
+                        case "/": level[y][x] = new Interactive({name:"door","type":"passage","material":"wood","symbol":"/","color":"lightCoral", "passable":false, "hp":30});
+                        break;
+                        case "|": level[y][x] = new Interactive({name:"window","type":"passage","material":"glass","symbol":"|","color":"lightCoral", "passable":false, "hp":3});
+                        break;
+                        case "P": level[y][x] = new Interactive({name:"lamp","type":"light","symbol":"P","state":true,"material":"metal","color":"yellow", "passable":false,"hp":4});
+                        break;
+                        case ".": level[y][x] = new Tile({name:"floor","type":"floor","material":"stone","symbol":".","color":"#666", "passable":true})
+                        break;
+                        case "#":level[y][x] = new Static({name:"wall","type":"wall","material":"stone","symbol":"#","color":"#ccc", "passable":false,"hp":40})
+                        break;
+                        default: level[y][x] = null;
+                    }
+                })
+            })
+            
+            level[5][15]["items"].push(new Consumable({"name":"apple","symbol":"o","type":"consumable","passable":true,"volume":0.1,"weight":0.1,"hp":1,"material":"food"}));
+            level[5][15]["items"].push(new Consumable({"name":"banana","symbol":"(","type":"consumable","passable":true,"volume":0.1,"weight":0.1,"hp":1,"material":"food"}));
+            level[5][17]["items"].push(new Consumable({"name":"pineapple","symbol":"O","type":"consumable","passable":true,"volume":0.5,"weight":0.3,"hp":1,"material":"food"}));
+            level[5][22]["items"].push(new Consumable({"name":"chocolate","symbol":"ö","type":"consumable","passable":true,"volume":0.1,"weight":0.1,"hp":1,"material":"food"}));
+            level[8][20]["items"].push(new Item({"name":"rock","symbol":"Q","type":"misc","passable":false,"volume":12,"weight":30,"hp":20,"material":"stone"}));
+            level[3][10]["items"].push(new Item({name:"big table","type":"deco","material":"wood","symbol":"T","color":"brown", "passable":false, "hp":8, "volume":15, "weight":10}));
+            level[4][10]["items"].push(new Item({name:"small chair","type":"deco","material":"wood","symbol":"h","color":"lightBlue", "passable":false,"hp":4, "volume":8, "weight":4,}));
+            level[3][1]["items"].push(new Item({name:"small chair","type":"deco","material":"wood","symbol":"h","color":"lightBlue", "passable":false,"hp":4, "volume":8, "weight":4,}));
+        }
+        
+        function render_level() {            
+            level_graphics.clearRect(0,0,499,600);
+            level_graphics.font = FONT_SIZE + "px " + FONT_TYPE;
+            level_graphics.fillStyle = "white";
+            level.forEach(function(line,y) {
+                line.forEach(function(tile,x) {
+                    level_graphics.fillStyle = level[y][x].color;
+                    level_graphics.fillText(level[y][x].symbol,x * FONT_SIZE , y * FONT_SIZE + 12);
+                    if (level[y][x]["items"].length > 0 ) {
+                        level_graphics.fillStyle = level[y][x]["items"][level[y][x]["items"].length - 1].color;
+                        level_graphics.fillText(level[y][x]["items"][level[y][x]["items"].length - 1].symbol,x * FONT_SIZE , y * FONT_SIZE + 12);
+                    }
+                })    
+            })
+            
+            level_graphics.fillStyle = player.color;
+            level_graphics.fillText(player.symbol,player.x * FONT_SIZE, player.y * FONT_SIZE + 12);
+        }
+        
+        function render_log_msg(msg_color,msg) {                        
+            if (!msg_color) { msg_color = "white"}
+            
+            level_graphics.font = FONT_SIZE + "px " + FONT_TYPE;
+            level_graphics.clearRect(502,4,398,595);
+            render_log_hud();
+            
+            log_buffer.push([msg_color,msg]);
+            
+            if (log_buffer.length > LOG_MAX) {
+                log_buffer.shift();   
+            }
+            
+            log_buffer.forEach(function(text,index) {
+                level_graphics.fillStyle = text[0];
+                level_graphics.fillText(text[1],510,index * FONT_SIZE + 20 );
+            })
+            
+        }
+        
+        function render_misc_info() {
+            level_graphics.clearRect(502,575,390,20);
+            level_graphics.font = FONT_SIZE + "px " + FONT_TYPE;
+            level_graphics.fillStyle = "white";
+            level_graphics.fillText("x:" + player.x + " y:" + player.y,505,590);
+        }
+        
+        function render_menu_hud() {
+            level_graphics.beginPath();
+            level_graphics.strokeStyle = "white";
+            level_graphics.fillStyle = "rgba(0,0,0,0.75)";
+            level_graphics.lineWidth = 2;
+            level_graphics.moveTo(2,2);
+            level_graphics.lineTo(480,2);
+            level_graphics.lineTo(480,598);
+            level_graphics.lineTo(2,598);
+            level_graphics.lineTo(2,2);
+            level_graphics.fill();
+            level_graphics.stroke();
+            level_graphics.closePath();
+        }
+        
+        function render_help() {
+            var vertical_offset = 12;
+            var line = 2;
+            
+            level_graphics.font = FONT_SIZE + "px " + FONT_TYPE;
+            level_graphics.fillStyle = "white";
+            level_graphics.fillText("Command List",5,vertical_offset*line++);
+            level_graphics.fillText("=========================================================",5,vertical_offset*line++);
+            level_graphics.fillText("[e]..................examine",5,vertical_offset*line++);
+            level_graphics.fillText("[g]..................grab/take",5,vertical_offset*line++);
+            level_graphics.fillText("[o]..................open/close on/off",5,vertical_offset*line++);
+            level_graphics.fillText("[s]..................smash",5,vertical_offset*line++);
+            level_graphics.fillText("[m]..................move an object",5,vertical_offset*line++);
+            level_graphics.fillText("[Up].................go north",5,vertical_offset*line++);
+            level_graphics.fillText("[Right]..............go east",5,vertical_offset*line++);
+            level_graphics.fillText("[Down]...............go south",5,vertical_offset*line++);
+            level_graphics.fillText("[Left]...............go west",5,vertical_offset*line++);
+            level_graphics.fillText("[?]..................help menu",5,vertical_offset*line++);
+            level_graphics.fillText("[Esc]................close menu",5,vertical_offset*line++);
+        }
+        
+        function render_log_hud() {            
+            level_graphics.beginPath();
+            level_graphics.strokeStyle = "white";
+            level_graphics.lineWidth = 2;
+            level_graphics.moveTo(500,2);
+            level_graphics.lineTo(898,2);
+            level_graphics.lineTo(898,598);
+            level_graphics.lineTo(500,598);
+            level_graphics.lineTo(500,2);
+            level_graphics.stroke();
+            level_graphics.closePath();
+        }
+                
+        function interaction(direction) {
+            function get_target_coordinates(direction,offset) {
+                var tile_offset = offset;
+                var dir_mapping = { 
+                                    "ArrowRight" : [0,tile_offset],
+                                    "ArrowLeft"  : [0,-tile_offset],
+                                    "ArrowUp"    : [-tile_offset,0],
+                                    "ArrowDown"  : [tile_offset,0]
+                                  }  
+                return [dir_mapping[direction][0], dir_mapping[direction][1]];
+            }
+      
+            var target_tile = level[player.y + get_target_coordinates(direction,1)[0]][player.x + get_target_coordinates(direction,1)[1]];
+
+            if (mode == "move") {
+                if (target_tile.passable) {
+                    if (target_tile.items.length > 0) {
+                        if (target_tile.items[target_tile.items.length - 1].passable) {
+                            player.x+=get_target_coordinates(direction,1)[1];
+                            player.y+=get_target_coordinates(direction,1)[0];
+                            render_level() 
+                        } 
+                    } else {
+                        player.x+=get_target_coordinates(direction,1)[1];
+                        player.y+=get_target_coordinates(direction,1)[0];
+                        render_level()
+                    }
+                }
+            } else if (mode == "examine") {
+                target_tile.description(); 
+                target_tile["items"].forEach(function(item,i) {
+                    item.description();
+                })
+                mode = "move";
+            } else if (mode == "open") {
+                target_tile.switch ? target_tile.switch() : render_log_msg("red","Nothing to open/close or turn on/off");
+                render_level();
+                mode = "move";
+            } else if (mode == "smash") {
+                target_tile.smash ? target_tile.smash(player.dmg) : render_log_msg("red","Nothing to smash");
+                render_level();
+                mode = "move";
+            } else if (mode == "grab") {
+                if (target_tile["items"].length > 0) {                
+                    var target_item = target_tile["items"][target_tile["items"].length - 1 ];
+                    target_item.grab(target_tile["items"]);
+                    render_level();
+                } else {
+                    render_log_msg("red","Nothing to grab, it's static")
+                }
+                mode = "move";
+            } else if (mode == "shift") {
+                if (target_tile["items"].length > 0) {  
+                    var target_item = target_tile["items"][target_tile["items"].length - 1 ];
+                    var where_to_move = level[player.y + get_target_coordinates(direction,2)[0]][player.x + get_target_coordinates(direction,2)[1]];
+                    if (target_item.move(target_tile,where_to_move)) {
+                        player.x+=get_target_coordinates(direction,1)[1];
+                        player.y+=get_target_coordinates(direction,1)[0];
+                        render_level();
+                    }
+                } else {
+                    render_log_msg("red","Nothing here to move");
+                }
+                mode = "move";
+            }
+        }
+        
+        document.addEventListener("keyup",function(e) {
+            switch (e.key) {
+                case "q":
+                    console.log(player.equipment);
+                    break;   
+                case "e":
+                    mode = "examine";
+                    render_log_msg(null,"Examine which direction?");
+                    break;     
+                case "g":
+                    mode = "grab";
+                    render_log_msg(null,"grab which direction?");
+                    break;  
+                case "o":
+                    mode = "open";
+                    render_log_msg(null,"Open in which direction?");
+                    break;   
+                case "s":
+                    mode = "smash";
+                    render_log_msg(null,"Smash in which direction?");
+                    break; 
+                case "m":
+                    mode = "shift";
+                    render_log_msg(null,"Move object in which direction?");
+                    break; 
+                case "?":
+                    mode = "help";
+                    render_menu_hud();
+                    render_help();
+                    break; 
+            }
+            
+            if (e.key == "Escape") {
+                if (mode == "help") {
+                    render_level()   
+                    mode="move";
+                }
+            }
+            
+            if (e.key == "ArrowRight") {
+                interaction("ArrowRight");
+            } else if (e.key == "ArrowLeft") {
+                interaction("ArrowLeft");
+            } else if (e.key == "ArrowUp") {
+                interaction("ArrowUp");
+            } else if (e.key == "ArrowDown") {
+                interaction("ArrowDown");
+            }
+            
+            render_misc_info();
+        })
+                
+        
+    </script>
+
+</body>
+</html>
